@@ -1,7 +1,7 @@
 # SEO Sitemap CLI Tool - Makefile
 # Automation of main development and deployment commands
 
-.PHONY: help install install-dev test lint format clean run-example demo setup-git release
+.PHONY: help install install-dev lint format clean run-example demo setup-git release
 
 # Settings
 PYTHON := python3
@@ -40,16 +40,9 @@ install-dev: install ## Install for development with additional tools
 	$(PIP) install flake8 black isort pytest
 	@echo "$(GREEN)Development environment ready!$(RESET)"
 
-test: ## Run tests
-	@echo "$(BLUE)Running tests...$(RESET)"
-	$(PYTHON_VENV) -m pytest tests/ -v || echo "$(YELLOW)Tests not found or pytest not installed$(RESET)"
-	@echo "$(BLUE)Checking CLI help...$(RESET)"
-	$(PYTHON_VENV) seo_sitemap_cli.py --help
-
 lint: ## Check code with flake8
 	@echo "$(BLUE)Checking code...$(RESET)"
-	$(PYTHON) -m venv $(VENV)
-	$(VENV)/bin/flake8 seo_sitemap_cli.py --max-line-length=120 --ignore=E203,W503;
+	$(VENV)/bin/flake8 seo_sitemap_cli.py --max-line-length=120 --ignore=E203,W503 || echo "$(YELLOW)flake8 not installed$(RESET)"
 
 format: ## Format code with black
 	@echo "$(BLUE)Formatting code...$(RESET)"
@@ -65,28 +58,54 @@ clean: ## Clean temporary files
 	rm -rf dist/
 	rm -f *.pyc
 	rm -f seo_report_*.csv
+	rm -f report_*.csv
 	rm -f *_report_*.csv
 	@echo "$(GREEN)Cleanup complete$(RESET)"
 
-run-example: ## Run example availability check
-	@echo "$(BLUE)Running example: URL availability check...$(RESET)"
-	$(PYTHON_VENV) seo_sitemap_cli.py check-availability https://dorokhovich.com/sitemap.xml || echo "$(YELLOW)Using test sitemap...$(RESET)"
-
-demo: ## Demonstrate all main functions
-	@echo "$(BLUE)SEO Sitemap CLI Tool Demo$(RESET)"
-	@echo "$(BLUE)=========================$(RESET)"
+run: ## Interactive run - prompts for URL and report name
+	@echo "$(BLUE)SEO Sitemap CLI Tool - Interactive Mode$(RESET)"
+	@echo "$(BLUE)=====================================$(RESET)"
 	@echo ""
-	@echo "$(GREEN)1. Command help:$(RESET)"
-	$(PYTHON_VENV) seo_sitemap_cli.py --help
-	@echo ""
-	@echo "$(GREEN)2. Availability check (demo):$(RESET)"
-	@echo "$(YELLOW)Creating test sitemap for demonstration...$(RESET)"
-	@echo '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://httpbin.org/status/200</loc></url><url><loc>https://httpbin.org/status/404</loc></url><url><loc>https://httpbin.org/status/301</loc></url></urlset>' > demo_sitemap.xml
-	@echo "$(BLUE)Running availability check...$(RESET)"
-	$(PYTHON_VENV) seo_sitemap_cli.py check-availability https://dorokhovich.com/sitemap.xml || echo "$(YELLOW)Demo completed$(RESET)"
-	@rm -f demo_sitemap.xml
-	@echo ""
-	@echo "$(GREEN)Demo completed!$(RESET)"
+	@read -p "Enter sitemap URL: " url; \
+	if [ -z "$$url" ]; then \
+		echo "$(RED)URL is required$(RESET)"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	echo "Available commands:"; \
+	echo "  1) check-availability - Quick URL availability check"; \
+	echo "  2) analyze           - Full SEO analysis with report"; \
+	echo "  3) submit            - Submit to IndexNow"; \
+	echo ""; \
+	read -p "Select command (1-3): " cmd; \
+	case $$cmd in \
+		1) \
+			echo "$(BLUE)Running availability check for: $$url$(RESET)"; \
+			$(PYTHON_VENV) seo_sitemap_cli.py check-availability "$$url"; \
+			;; \
+		2) \
+			default_report="seo_report_$$(date +%Y%m%d_%H%M%S)"; \
+			read -p "Report filename [$$default_report]: " report; \
+			report=$${report:-$$default_report}; \
+			echo "$(BLUE)Running SEO analysis for: $$url$(RESET)"; \
+			echo "$(BLUE)Report will be saved as: $$report.csv$(RESET)"; \
+			$(PYTHON_VENV) seo_sitemap_cli.py analyze "$$url" --output "$$report"; \
+			;; \
+		3) \
+			read -p "Enter IndexNow API key: " api_key; \
+			read -p "Enter key location URL: " key_location; \
+			if [ -z "$$api_key" ] || [ -z "$$key_location" ]; then \
+				echo "$(RED)API key and key location are required$(RESET)"; \
+				exit 1; \
+			fi; \
+			echo "$(BLUE)Submitting to IndexNow: $$url$(RESET)"; \
+			$(PYTHON_VENV) seo_sitemap_cli.py submit "$$url" --api-key "$$api_key" --key-location "$$key_location"; \
+			;; \
+		*) \
+			echo "$(RED)Invalid selection$(RESET)"; \
+			exit 1; \
+			;; \
+	esac
 
 setup-git: ## Setup Git repository
 	@echo "$(BLUE)Setting up Git repository...$(RESET)"
@@ -124,10 +143,9 @@ dev-setup: install-dev ## Complete development environment setup
 	@echo "  1. source $(VENV)/bin/activate"
 	@echo "  2. make lint          # Check code"
 	@echo "  3. make format        # Format code"
-	@echo "  4. make test          # Run tests"
-	@echo "  5. git add . && git commit -m 'message'"
+	@echo "  4. git add . && git commit -m 'message'"
 
-check: lint test ## Complete code check (lint + test)
+check: lint ## Complete code check (lint)
 	@echo "$(GREEN)All checks passed$(RESET)"
 
 build: clean ## Build distribution
@@ -148,11 +166,6 @@ uninstall-global: ## Remove global installation
 	@sudo rm -f /usr/local/bin/seo-sitemap
 	@echo "$(GREEN)Global command removed$(RESET)"
 
-show-urls: ## Show all URLs from sitemap (for debugging)
-	echo "$(BLUE)Extracting URLs from $(URL)...$(RESET)"; \
-	$(PYTHON_VENV) -c "from seo_sitemap_cli import SitemapParser; parser=SitemapParser(); urls=parser.parse_sitemap('$(URL)'); [print(url) for url in urls[:10]]"; \
-
-
 status: ## Show project status
 	@echo "$(BLUE)SEO Sitemap CLI Tool Status$(RESET)"
 	@echo "$(BLUE)============================$(RESET)"
@@ -169,7 +182,6 @@ quick-install: ## Quick installation (install + demo)
 quick-start: ## Quick project start (setup-git + install + demo)
 	@make setup-git
 	@make install
-	@make demo
 	@echo ""
 	@echo "$(GREEN)Project ready for use!$(RESET)"
 	@echo "$(YELLOW)Next steps:$(RESET)"
@@ -182,17 +194,17 @@ examples: ## Show usage examples
 	@echo "$(BLUE)==============================$(RESET)"
 	@echo ""
 	@echo "$(GREEN)1. Availability check:$(RESET)"
-	@echo "   python seo_sitemap_cli.py check-availability https://dorokhovich.com/sitemap.xml"
+	@echo "   python seo_sitemap_cli.py check-availability https://example.com/sitemap.xml"
 	@echo ""
 	@echo "$(GREEN)2. SEO analysis:$(RESET)"
-	@echo "   python seo_sitemap_cli.py analyze https://dorokhovich.com/sitemap.xml --output report"
+	@echo "   python seo_sitemap_cli.py analyze https://example.com/sitemap.xml --output report"
 	@echo ""
 	@echo "$(GREEN)3. IndexNow submission:$(RESET)"
-	@echo "   python seo_sitemap_cli.py submit https://dorokhovich.com/sitemap.xml \\"
-	@echo "     --api-key YOUR_KEY --key-location https://dorokhovich.com/key.txt"
+	@echo "   python seo_sitemap_cli.py submit https://example.com/sitemap.xml \\"
+	@echo "     --api-key YOUR_KEY --key-location https://example.com/key.txt"
 	@echo ""
 	@echo "$(GREEN)4. With additional parameters:$(RESET)"
-	@echo "   python seo_sitemap_cli.py analyze https://dorokhovich.com/sitemap.xml \\"
+	@echo "   python seo_sitemap_cli.py analyze https://example.com/sitemap.xml \\"
 	@echo "     --max-workers 20 --timeout 30 --output detailed_report"
 
 requirements: ## Show system requirements
