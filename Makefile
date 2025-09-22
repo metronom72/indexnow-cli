@@ -48,7 +48,8 @@ test: ## Run tests
 
 lint: ## Check code with flake8
 	@echo "$(BLUE)Checking code...$(RESET)"
-	$(VENV)/bin/flake8 seo_sitemap_cli.py --max-line-length=120 --ignore=E203,W503 || echo "$(YELLOW)flake8 not installed$(RESET)"
+	$(PYTHON) -m venv $(VENV)
+	$(VENV)/bin/flake8 seo_sitemap_cli.py --max-line-length=120 --ignore=E203,W503;
 
 format: ## Format code with black
 	@echo "$(BLUE)Formatting code...$(RESET)"
