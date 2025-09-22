@@ -70,7 +70,7 @@ clean: ## Clean temporary files
 
 run-example: ## Run example availability check
 	@echo "$(BLUE)Running example: URL availability check...$(RESET)"
-	$(PYTHON_VENV) seo_sitemap_cli.py check-availability https://httpbin.org/sitemap.xml || echo "$(YELLOW)Using test sitemap...$(RESET)"
+	$(PYTHON_VENV) seo_sitemap_cli.py check-availability https://dorokhovich.com/sitemap.xml || echo "$(YELLOW)Using test sitemap...$(RESET)"
 
 demo: ## Demonstrate all main functions
 	@echo "$(BLUE)SEO Sitemap CLI Tool Demo$(RESET)"
@@ -149,12 +149,9 @@ uninstall-global: ## Remove global installation
 	@echo "$(GREEN)Global command removed$(RESET)"
 
 show-urls: ## Show all URLs from sitemap (for debugging)
-	@if [ -z "$(URL)" ]; then \
-		echo "$(RED)Specify URL: make show-urls URL=https://example.com/sitemap.xml$(RESET)"; \
-	else \
-		echo "$(BLUE)Extracting URLs from $(URL)...$(RESET)"; \
-		$(PYTHON_VENV) -c "from seo_sitemap_cli import SitemapParser; parser=SitemapParser(); urls=parser.parse_sitemap('$(URL)'); [print(url) for url in urls[:10]]"; \
-	fi
+	echo "$(BLUE)Extracting URLs from $(URL)...$(RESET)"; \
+	$(PYTHON_VENV) -c "from seo_sitemap_cli import SitemapParser; parser=SitemapParser(); urls=parser.parse_sitemap('$(URL)'); [print(url) for url in urls[:10]]"; \
+
 
 status: ## Show project status
 	@echo "$(BLUE)SEO Sitemap CLI Tool Status$(RESET)"
@@ -185,17 +182,17 @@ examples: ## Show usage examples
 	@echo "$(BLUE)==============================$(RESET)"
 	@echo ""
 	@echo "$(GREEN)1. Availability check:$(RESET)"
-	@echo "   python seo_sitemap_cli.py check-availability https://example.com/sitemap.xml"
+	@echo "   python seo_sitemap_cli.py check-availability https://dorokhovich.com/sitemap.xml"
 	@echo ""
 	@echo "$(GREEN)2. SEO analysis:$(RESET)"
-	@echo "   python seo_sitemap_cli.py analyze https://example.com/sitemap.xml --output report"
+	@echo "   python seo_sitemap_cli.py analyze https://dorokhovich.com/sitemap.xml --output report"
 	@echo ""
 	@echo "$(GREEN)3. IndexNow submission:$(RESET)"
-	@echo "   python seo_sitemap_cli.py submit https://example.com/sitemap.xml \\"
-	@echo "     --api-key YOUR_KEY --key-location https://example.com/key.txt"
+	@echo "   python seo_sitemap_cli.py submit https://dorokhovich.com/sitemap.xml \\"
+	@echo "     --api-key YOUR_KEY --key-location https://dorokhovich.com/key.txt"
 	@echo ""
 	@echo "$(GREEN)4. With additional parameters:$(RESET)"
-	@echo "   python seo_sitemap_cli.py analyze https://example.com/sitemap.xml \\"
+	@echo "   python seo_sitemap_cli.py analyze https://dorokhovich.com/sitemap.xml \\"
 	@echo "     --max-workers 20 --timeout 30 --output detailed_report"
 
 requirements: ## Show system requirements
