@@ -127,50 +127,139 @@ class SitemapParser:
 class IndexNowSubmitter:
     """Class for submitting URLs to IndexNow"""
 
-    INDEXNOW_ENDPOINTS = {"bing": "https://api.indexnow.org/indexnow", "yandex": "https://yandex.com/indexnow"}
+    # Static endpoints for major search engines
+    STATIC_ENDPOINTS = {"bing": "https://api.indexnow.org/indexnow", "yandex": "https://yandex.com/indexnow"}
 
     def __init__(self, api_key: str, key_location: str, timeout: int = 30):
         self.api_key = api_key
         self.key_location = key_location
         self.timeout = timeout
         self.session = requests.Session()
+        self.available_engines = {}
+        self._load_search_engines()
+
+    def _load_search_engines(self):
+        """Load available search engines from IndexNow registry"""
+        try:
+            click.echo("[REGISTRY] Loading search engines from https://www.indexnow.org/searchengines.json")
+            response = self.session.get("https://www.indexnow.org/searchengines.json", timeout=self.timeout)
+            response.raise_for_status()
+
+            engines_registry = response.json()
+            click.echo(f"[REGISTRY] Found {len(engines_registry)} registered search engines")
+
+            # Load metadata for each engine
+            for engine_id, meta_url in engines_registry.items():
+                try:
+                    meta_response = self.session.get(meta_url, timeout=self.timeout)
+                    if meta_response.status_code == 200:
+                        meta_data = meta_response.json()
+                        if "api" in meta_data and not meta_data.get("unsubscribe", False):
+                            self.available_engines[engine_id] = {
+                                "name": meta_data.get("name", engine_id),
+                                "api": meta_data["api"],
+                                "host": meta_data.get("host", ""),
+                                "homepage": meta_data.get("homepage", ""),
+                            }
+                            click.echo(f"[ENGINE] Loaded: {engine_id} - {meta_data.get('name', 'Unknown')}")
+                        else:
+                            click.echo(f"[ENGINE] Skipped: {engine_id} (unsubscribed or no API)")
+                    else:
+                        click.echo(
+                            f"[ENGINE] Failed to load metadata for {engine_id}: HTTP {meta_response.status_code}"
+                        )
+                except Exception as e:
+                    click.echo(f"[ENGINE] Error loading {engine_id}: {e}")
+
+        except Exception as e:
+            click.echo(f"[REGISTRY] Failed to load search engines registry: {e}")
+            click.echo("[REGISTRY] Falling back to static endpoints")
+
+    def get_available_engines(self):
+        """Get list of available search engines"""
+        engines = {}
+        # Add static endpoints
+        engines.update(self.STATIC_ENDPOINTS)
+        # Add dynamic endpoints
+        for engine_id, data in self.available_engines.items():
+            engines[engine_id] = data["api"]
+        return engines
 
     def submit_urls(self, urls: List[str], host: str, endpoint: str = "bing") -> Dict:
         """Submit URLs to IndexNow"""
-        if endpoint not in self.INDEXNOW_ENDPOINTS:
-            raise ValueError(f"Unsupported endpoint: {endpoint}")
+        # Determine endpoint URL
+        endpoint_url = None
+        engine_name = endpoint
+
+        # Check static endpoints first
+        if endpoint in self.STATIC_ENDPOINTS:
+            endpoint_url = self.STATIC_ENDPOINTS[endpoint]
+        # Check dynamic endpoints
+        elif endpoint in self.available_engines:
+            endpoint_url = self.available_engines[endpoint]["api"]
+            engine_name = self.available_engines[endpoint]["name"]
+        else:
+            # Try to use endpoint as direct URL
+            if endpoint.startswith("http"):
+                endpoint_url = endpoint
+            else:
+                available = list(self.get_available_engines().keys())
+                raise ValueError(f"Unsupported endpoint: {endpoint}. Available: {', '.join(available)}")
 
         payload = {"host": host, "key": self.api_key, "keyLocation": self.key_location, "urlList": urls}
 
         # Log the curl command equivalent
         import json as json_lib
 
-        click.echo(f"[INDEXNOW] Submitting to {endpoint} endpoint")
-        click.echo(f"[CURL] curl -X POST '{self.INDEXNOW_ENDPOINTS[endpoint]}' \\")
-        click.echo("  -H 'Content-Type: application/json' \\")
+        click.echo(f"[INDEXNOW] Submitting to {engine_name} ({endpoint})")
+        click.echo(f"[ENDPOINT] {endpoint_url}")
+        click.echo(f"[CURL] curl -X POST '{endpoint_url}' \\")
+        click.echo("  -H 'Content-Type: application/json; charset=utf-8' \\")
         click.echo(f"  -d '{json_lib.dumps(payload)}'")
 
         try:
             response = self.session.post(
-                self.INDEXNOW_ENDPOINTS[endpoint],
+                endpoint_url,
                 json=payload,
                 timeout=self.timeout,
-                headers={"Content-Type": "application/json"},
+                headers={"Content-Type": "application/json; charset=utf-8"},
             )
 
             click.echo(f"[RESPONSE] Status: {response.status_code}")
             click.echo(f"[RESPONSE] Body: {response.text if response.text else 'Empty'}")
 
+            # Handle different response codes according to IndexNow spec
+            success_codes = [200, 202]
+            if response.status_code == 200:
+                click.echo("[STATUS] URL submitted successfully")
+            elif response.status_code == 202:
+                click.echo("[STATUS] URL received. IndexNow key validation pending")
+            elif response.status_code == 400:
+                click.echo("[ERROR] Bad request - Invalid format")
+            elif response.status_code == 403:
+                click.echo("[ERROR] Forbidden - Key not valid (key not found or file found but key not in file)")
+            elif response.status_code == 422:
+                click.echo("[ERROR] Unprocessable Entity - URLs don't belong to host or key doesn't match schema")
+            elif response.status_code == 429:
+                click.echo("[ERROR] Too Many Requests - Potential spam detected")
+
             return {
                 "status_code": response.status_code,
-                "success": response.status_code in [200, 202],
+                "success": response.status_code in success_codes,
                 "response": response.text if response.text else "No response body",
                 "endpoint": endpoint,
+                "endpoint_url": endpoint_url,
             }
 
         except requests.RequestException as e:
             click.echo(f"[ERROR] Request failed: {e}")
-            return {"status_code": 0, "success": False, "response": str(e), "endpoint": endpoint}
+            return {
+                "status_code": 0,
+                "success": False,
+                "response": str(e),
+                "endpoint": endpoint,
+                "endpoint_url": endpoint_url,
+            }
 
 
 class SEOAnalyzer:
@@ -394,12 +483,49 @@ def cli():
 @click.option("--api-key", required=True, help="IndexNow API key")
 @click.option("--key-location", required=True, help="URL where API key file is hosted")
 @click.option("--host", help="Site host (if different from sitemap URL)")
-@click.option("--endpoint", default="bing", type=click.Choice(["bing", "yandex"]), help="IndexNow endpoint")
+@click.option("--endpoint", default="bing", help="IndexNow endpoint (engine ID, name, or URL)")
 @click.option("--batch-size", default=100, help="URL batch size for submission")
 @click.option("--delay", default=1, help="Delay between requests (seconds)")
 @click.option("--verbose", "-v", is_flag=True, help="Show all URLs being submitted")
-def submit(sitemap_url, api_key, key_location, host, endpoint, batch_size, delay, verbose):
+@click.option("--list-engines", is_flag=True, help="List all available search engines and exit")
+def submit(sitemap_url, api_key, key_location, host, endpoint, batch_size, delay, verbose, list_engines):
     """Submit URLs from sitemap to IndexNow"""
+
+    # Create submitter to load engines
+    submitter = IndexNowSubmitter(api_key, key_location)
+
+    # List engines and exit if requested
+    if list_engines:
+        click.echo("\nAvailable IndexNow Search Engines:")
+        click.echo("=" * 60)
+
+        # Show static engines
+        if submitter.STATIC_ENDPOINTS:
+            click.echo("\nStatic Endpoints:")
+            click.echo("-" * 30)
+            for engine_id, url in submitter.STATIC_ENDPOINTS.items():
+                click.echo(f"  {engine_id:15} -> {url}")
+
+        # Show dynamic engines
+        if submitter.available_engines:
+            click.echo("\nDynamic Endpoints (from registry):")
+            click.echo("-" * 40)
+            for engine_id, data in submitter.available_engines.items():
+                name = data["name"]
+                api = data["api"]
+                homepage = data.get("homepage", "")
+                click.echo(f"  {engine_id:15} {name}")
+                click.echo(f"  {' ' * 15} API: {api}")
+                if homepage:
+                    click.echo(f"  {' ' * 15} Web: {homepage}")
+                click.echo()
+
+        click.echo("Usage examples:")
+        click.echo("  --endpoint bing")
+        click.echo("  --endpoint yandex")
+        click.echo("  --endpoint <any_engine_id_from_above>")
+        click.echo("  --endpoint https://custom-search-engine.com/indexnow")
+        return
 
     click.echo(f"Parsing sitemap: {sitemap_url}")
 
@@ -430,9 +556,6 @@ def submit(sitemap_url, api_key, key_location, host, endpoint, batch_size, delay
     click.echo(f"Target host: {host}")
     click.echo(f"API key: {api_key}")
     click.echo(f"Key location: {key_location}")
-
-    # Create submitter
-    submitter = IndexNowSubmitter(api_key, key_location)
 
     # Submit URLs in batches
     total_submitted = 0
