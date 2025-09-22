@@ -177,7 +177,6 @@ status: ## Show project status
 
 quick-install: ## Quick installation (install + demo)
 	@make install
-	@make demo
 
 quick-start: ## Quick project start (setup-git + install + demo)
 	@make setup-git
