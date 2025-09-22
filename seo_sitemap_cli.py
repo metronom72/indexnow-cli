@@ -54,15 +54,20 @@ class SitemapParser:
     def parse_sitemap(self, sitemap_url: str) -> List[str]:
         """Parse sitemap.xml and return list of URLs"""
         try:
+            click.echo(f"[REQUEST] Fetching sitemap: {sitemap_url}")
+
             # Handle local file URLs
             if sitemap_url.startswith("file://"):
                 file_path = sitemap_url.replace("file://", "")
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
+                click.echo(f"[FILE] Loaded local file: {file_path}")
             else:
+                click.echo(f"[CURL] curl -H 'User-Agent: SEO-Sitemap-Tool/1.0' '{sitemap_url}'")
                 response = self.session.get(sitemap_url, timeout=self.timeout)
                 response.raise_for_status()
                 content = response.content
+                click.echo(f"[RESPONSE] Status: {response.status_code}, Size: {len(content)} bytes")
 
             root = ET.fromstring(content)
             urls = []
@@ -79,6 +84,11 @@ class SitemapParser:
                 if loc_elem is not None and loc_elem.text:
                     sitemap_urls.append(loc_elem.text.strip())
 
+            if sitemap_urls:
+                click.echo(f"[SITEMAP INDEX] Found {len(sitemap_urls)} nested sitemaps")
+                for idx, nested_url in enumerate(sitemap_urls, 1):
+                    click.echo(f"[NESTED {idx}] {nested_url}")
+
             # Recursively process nested sitemaps
             for sitemap_url in sitemap_urls:
                 try:
@@ -87,7 +97,26 @@ class SitemapParser:
                 except Exception as e:
                     click.echo(f"Error processing nested sitemap {sitemap_url}: {e}", err=True)
 
-            return list(set(urls))  # Remove duplicates
+            # Check for duplicates
+            unique_urls = list(set(urls))
+            duplicates_count = len(urls) - len(unique_urls)
+
+            click.echo(f"[PARSED] Found {len(urls)} total URLs, {len(unique_urls)} unique")
+
+            if duplicates_count > 0:
+                click.echo(f"[DUPLICATES] Found {duplicates_count} duplicate URLs")
+                # Find and display duplicates
+                from collections import Counter
+
+                url_counts = Counter(urls)
+                duplicates = [url for url, count in url_counts.items() if count > 1]
+
+                click.echo("[DUPLICATE LIST]")
+                for duplicate_url in duplicates:
+                    count = url_counts[duplicate_url]
+                    click.echo(f"  {count}x: {duplicate_url}")
+
+            return unique_urls
 
         except (requests.RequestException, FileNotFoundError, IOError) as e:
             raise click.ClickException(f"Error loading sitemap: {e}")
@@ -113,6 +142,14 @@ class IndexNowSubmitter:
 
         payload = {"host": host, "key": self.api_key, "keyLocation": self.key_location, "urlList": urls}
 
+        # Log the curl command equivalent
+        import json as json_lib
+
+        click.echo(f"[INDEXNOW] Submitting to {endpoint} endpoint")
+        click.echo(f"[CURL] curl -X POST '{self.INDEXNOW_ENDPOINTS[endpoint]}' \\")
+        click.echo("  -H 'Content-Type: application/json' \\")
+        click.echo(f"  -d '{json_lib.dumps(payload)}'")
+
         try:
             response = self.session.post(
                 self.INDEXNOW_ENDPOINTS[endpoint],
@@ -120,6 +157,9 @@ class IndexNowSubmitter:
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
             )
+
+            click.echo(f"[RESPONSE] Status: {response.status_code}")
+            click.echo(f"[RESPONSE] Body: {response.text if response.text else 'Empty'}")
 
             return {
                 "status_code": response.status_code,
@@ -129,6 +169,7 @@ class IndexNowSubmitter:
             }
 
         except requests.RequestException as e:
+            click.echo(f"[ERROR] Request failed: {e}")
             return {"status_code": 0, "success": False, "response": str(e), "endpoint": endpoint}
 
 
@@ -356,7 +397,8 @@ def cli():
 @click.option("--endpoint", default="bing", type=click.Choice(["bing", "yandex"]), help="IndexNow endpoint")
 @click.option("--batch-size", default=100, help="URL batch size for submission")
 @click.option("--delay", default=1, help="Delay between requests (seconds)")
-def submit(sitemap_url, api_key, key_location, host, endpoint, batch_size, delay):
+@click.option("--verbose", "-v", is_flag=True, help="Show all URLs being submitted")
+def submit(sitemap_url, api_key, key_location, host, endpoint, batch_size, delay, verbose):
     """Submit URLs from sitemap to IndexNow"""
 
     click.echo(f"Parsing sitemap: {sitemap_url}")
@@ -371,10 +413,23 @@ def submit(sitemap_url, api_key, key_location, host, endpoint, batch_size, delay
         click.echo("No URLs found in sitemap", err=True)
         return
 
+    # Show URLs if verbose mode
+    if verbose:
+        click.echo("\n" + "=" * 50)
+        click.echo("URLS TO SUBMIT:")
+        click.echo("=" * 50)
+        for idx, url in enumerate(urls, 1):
+            click.echo(f"{idx:3d}. {url}")
+        click.echo("=" * 50 + "\n")
+
     # Determine host if not specified
     if not host:
         parsed_url = urlparse(sitemap_url)
         host = parsed_url.netloc
+
+    click.echo(f"Target host: {host}")
+    click.echo(f"API key: {api_key}")
+    click.echo(f"Key location: {key_location}")
 
     # Create submitter
     submitter = IndexNowSubmitter(api_key, key_location)
@@ -387,8 +442,13 @@ def submit(sitemap_url, api_key, key_location, host, endpoint, batch_size, delay
         batch = urls[i : i + batch_size]
 
         click.echo(
-            f"Submitting batch {i // batch_size + 1}/{(len(urls) + batch_size - 1) // batch_size} ({len(batch)} URLs)"
+            f"\nSubmitting batch {i // batch_size + 1}/{(len(urls) + batch_size - 1) // batch_size} ({len(batch)} URLs)"
         )
+
+        if verbose:
+            click.echo("Batch URLs:")
+            for url in batch:
+                click.echo(f"  - {url}")
 
         result = submitter.submit_urls(batch, host, endpoint)
 
@@ -400,6 +460,7 @@ def submit(sitemap_url, api_key, key_location, host, endpoint, batch_size, delay
             click.echo(f"Submission error: {result['response']}", err=True)
 
         if delay > 0 and i + batch_size < len(urls):
+            click.echo(f"Waiting {delay} seconds before next batch...")
             time.sleep(delay)
 
     click.echo(f"\nTotal submitted: {total_submitted}/{len(urls)} URLs")
